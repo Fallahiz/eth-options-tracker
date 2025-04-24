@@ -8,7 +8,13 @@ import datetime
 
 # Google Sheets setup
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
-creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPE)
+import json
+
+creds = Credentials.from_service_account_info(
+    json.loads(st.secrets["GOOGLE_SHEETS_CREDENTIALS"]),
+    scopes=SCOPE
+)
+
 client = gspread.authorize(creds)
 
 SHEET_ID = "1i5c4LXNfI8vmxGbktwDnQxD2vY2FmGCDhBKfUPagROI"
