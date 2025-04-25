@@ -1,70 +1,73 @@
 import streamlit as st
 import pandas as pd
-import gspread
-from google.oauth2.service_account import Credentials
-import plotly.express as px
-import requests
 import datetime
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2 import service_account
+import requests
 
-# Google Sheets setup
-SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
-import json
-
-creds = Credentials.from_service_account_info(
-    json.loads(st.secrets["GOOGLE_SHEETS_CREDENTIALS"]),
-    scopes=SCOPE
+# Google Sheets authentication
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+credentials = service_account.Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"], scopes=scope
 )
+client = gspread.authorize(credentials)
+sheet = client.open("eth_options_tracker").sheet1
 
-client = gspread.authorize(creds)
+def fetch_eth_price():
+    url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        return data["ethereum"]["usd"]
+    except:
+        return "Error"
 
-SHEET_ID = "1i5c4LXNfI8vmxGbktwDnQxD2vY2FmGCDhBKfUPagROI"
-SHEET_NAME = "Sheet1"
-sheet = client.open_by_key(SHEET_ID).worksheet(SHEET_NAME)
-data = sheet.get_all_records()
-df = pd.DataFrame(data)
+st.title("Ethereum Options Tracker")
 
-# Sidebar input
-st.sidebar.title("ثبت معامله جدید")
-with st.sidebar.form("trade_form"):
-    date = st.date_input("تاریخ", datetime.date.today())
-    strike = st.number_input("Strike Price", value=3000.0)
-    premium = st.number_input("Premium (ETH)", value=0.05)
-    call_put = st.selectbox("نوع", ["Call", "Put"])
-    action = st.selectbox("اکشن", ["Buy", "Sell"])
-    submitted = st.form_submit_button("ثبت")
+# Show ETH price
+eth_price = fetch_eth_price()
+st.markdown(f"### Current ETH Price: ${eth_price}")
+
+# Load existing data
+@st.cache_data
+
+def load_data():
+    records = sheet.get_all_records()
+    return pd.DataFrame(records)
+
+df = load_data()
+
+# New Record Entry
+st.subheader("Add New Option Trade")
+with st.form("entry_form"):
+    col1, col2 = st.columns(2)
+    with col1:
+        date = st.date_input("Date", datetime.date.today())
+        option_type = st.selectbox("Option Type", ["Call", "Put"])
+        eth_price = st.number_input("ETH Price", min_value=0.0, value=0.0)
+    with col2:
+        strike_price = st.number_input("Strike Price", min_value=0.0, value=0.0)
+        premium = st.number_input("Premium Paid", min_value=0.0, value=0.0)
+        expiration = st.date_input("Expiration Date", datetime.date.today())
+
+    submitted = st.form_submit_button("Add Record")
+
     if submitted:
-        new_row = [str(date), strike, premium, call_put, action]
+        new_row = [str(date), option_type, eth_price, strike_price, premium, str(expiration)]
         sheet.append_row(new_row)
-        st.success("معامله ثبت شد. صفحه را Refresh کن.")
+        st.success("Record added successfully!")
 
-# Deletion section
-st.sidebar.title("🗑️ حذف رکورد")
+# Delete Record
+st.subheader("Delete a Record")
 if not df.empty:
-    to_delete = st.sidebar.selectbox("رکوردی برای حذف انتخاب کن", df.index.astype(str))
-    if st.sidebar.button("حذف رکورد"):
-        sheet.delete_rows(int(to_delete)+2)
-        st.sidebar.success("رکورد حذف شد. صفحه را Refresh کن.")
+    df["Index"] = df.index + 1
+    selected_index = st.number_input("Enter the Index of the Record to Delete", min_value=1, max_value=len(df), step=1)
+    if st.button("Delete Record"):
+        sheet.delete_rows(selected_index + 1)  # +1 to account for header
+        st.success(f"Record {selected_index} deleted.")
 
-st.title("📈 اپ تریکر معاملات آپشن اتریوم")
-
-# Ethereum live price
-st.subheader("قیمت لحظه‌ای اتریوم")
-try:
-    eth_data = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd").json()
-    eth_price = eth_data["ethereum"]["usd"]
-    st.metric("ETH / USD", f"${eth_price}")
-except:
-    st.error("اتصال به قیمت لحظه‌ای با مشکل مواجه شد.")
-
-# Show data
-st.subheader("لیست معاملات")
+# Show all records
+st.subheader("All Records")
 st.dataframe(df)
-
-# Chart
-st.subheader("نمودار معاملات")
-if not df.empty:
-    chart_df = df.copy()
-    chart_df["تاریخ"] = pd.to_datetime(chart_df["تاریخ"])
-    fig = px.scatter(chart_df, x="تاریخ", y="Strike Price", color="نوع",
-                     size="Premium (ETH)", hover_data=["اکشن"])
-    st.plotly_chart(fig, use_container_width=True)
